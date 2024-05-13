@@ -1,0 +1,381 @@
+---
+title: "Network and Graph Analysis"
+author: "Hong Jiang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    fig_caption: yes
+    theme:
+      bootswatch: sandstone
+      base_font:
+        "Arial"
+      code_font:
+        google: "JetBrains Mono"
+      progress-bar-bg: "orange"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+## set work dir as this file's dir
+# setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+```
+```{r library, include = TRUE}
+# Load igraph and igraph data packages
+library(igraph)
+library(igraphdata)
+library(reshape)
+library(ggplot2)
+library(dplyr)
+```
+## load the data
+```{r}
+data(UKfaculty)
+```
+## Exercises Part 1
+### Data overview
+number of vertices and the edges: 817/81
+it's a weighted directional graph with the Group attribute.
+```{r}
+# Graph attributes
+E(UKfaculty) # Graph edges
+#> 817
+V(UKfaculty) # Graph vertices
+#> 81
+## it's directional with Group and weighte attributes
+UKfaculty
+#> attr: Type (g/c), Date (g/c), Citation (g/c), Author (g/c), Group
+#| (v/n), weight (e/n)
+graph_attr(UKfaculty) 
+
+# Remove multiple edges in UKfaculty, combining their weights by "sum" and removing their type (only one type)
+UKfacultys <- igraph::simplify(UKfaculty,
+    remove.multiple = TRUE,
+    remove.loops = TRUE,
+    edge.attr.comb = list(
+        weight = "sum",
+        type = "ignore"
+    )
+)
+```
+### Visualization
+Generate a plot of the simplified network, with the following visualization parameters. For vertices, a size of 10; any color of your preference for vertex, frame and label; and label size of 0.8. For edges, an arrow size of 0.3; any color of your preference; and a curve of 0.2. Use the LGL algorithm layout.
+```{r}
+plot(UKfacultys,
+    edge.arrow.size = 0.3,
+    vertex.color = "lightblue",
+    vertex.size = 10,
+    vertex.frame.color = "black",
+    vertex.label.color = "black",
+    vertex.label.cex = 0.8,
+    vertex.label.dist = 2.5,
+    curved = 0.2
+)
+```
+### Refine the visualiztion
+replace the vertex labels with the node names stored in “Group”, inside the igraph object. Set a different node color depending on the Group each node belongs to. Remember that you might have to remove the vertex.color parameter, so it does not override your new colors. Finally, add a suitable title and a legend showing the colors that correspond to each group, and plot the graph.
+```{r}
+plot(UKfacultys,
+    edge.arrow.size = 0.3,
+    vertex.size = 10,
+    vertex.color = c("#0F8B8D", "#EC9A29", "#A8201A", '#DAD2D8'),
+    vertex.frame.color = "black",
+    vertex.label.color = "black",
+    vertex.label.cex = 0.8,
+    vertex.label.dist = 2.5,
+    curved = 0.2,
+    label = V(UKfacultys)$Group,
+    main = 'UK Faculty network by Group'
+)
+legend(
+    legend = c('1', '2', '3', '4'),
+    "bottom",
+    pch    = 21,
+    cex    = 1,
+    pt.bg  = c("#0F8B8D", "#EC9A29", "#A8201A", '#DAD2D8'),
+    title    = "Group",
+)
+```
+### Network attributes
+Calculate the density, transitivity (global and local) and diameter (with weights, considering the network first directed and then undirected) of the graph. 
+```{r}
+global_metric <- cbind(
+    size    = vcount(UKfacultys),
+    nedges  = ecount(UKfacultys),
+    density = edge_density(UKfacultys),
+    recip   = reciprocity(UKfacultys),
+    centr   = centr_betw(UKfacultys)$centralization,
+    pathLen = mean_distance(UKfacultys),
+    transitivity_g = transitivity(
+  UKfacultys,
+  type = "global",
+  vids = NULL,
+  weights = NULL,
+  isolates = "zero"
+),
+transitivity_l = transitivity(
+  UKfacultys,
+  type = "local",
+  vids = NULL,
+  weights = NULL,
+  isolates = "zero"
+),
+diameter_ud = diameter(UKfacultys, directed = F, unconnected = TRUE, weights = NULL),
+diameter_d = diameter(UKfacultys, directed = TRUE, unconnected = TRUE, weights = NULL)
+)
+```
+According to the value of the global transitivity, which is
+```{r}
+global_metric[,"transitivity_g"][1]
+```
+Almost half of the triplets are closed.
+
+Look at the different diameters obtained by considering the network directed or undirected.
+```{r}
+global_metric[, "diameter_ud"][1] > global_metric[, "diameter_d"][1]
+```
+the directional diameters are larger.
+
+This is reasonable as the directional network is a sub-network of the undirectional one.
+
+### Describing the nodes. 
+Generate a table that summarizes graph centrality metrics (degree, closeness, eigenvector, and betweenness), hub score, and authority score for every node. Keep the weights for the calculation (remove the “weights = NA” parameter from the functions that use it). 
+```{r}
+node_desp <- data.frame(
+  ids = as.vector(V(UKfacultys)), net = "UKfacultys",
+  degree = degree(graph = UKfacultys, mode = "total"),
+  closeness = closeness(graph = UKfacultys, mode = "total",
+                                 normalized = T),
+  between = betweenness(graph = UKfacultys, normalized = F) ,
+  hub = hub_score(graph = UKfacultys),
+  authority = authority_score(graph = UKfacultys)
+)
+```
+For each node metric or score, identify the node with the highest value. 
+```{r}
+vars_to_stack <- c("ids", "degree", "closeness", "between", "hub.vector", "authority.vector")
+node_desp_long <- melt(node_desp[, vars_to_stack], id.vars = "ids")
+ggplot(node_desp_long, aes(x = factor(ids, levels = 1:length(ids)), y = value)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  xlab("Ids") +
+  ylab("Centrality") +
+  theme(axis.text = element_text(size = 6.5))
+ggsave('figures/UKfacaulty_centrality.pdf')
+pdf("figures/UKfacaulty_degree_net.pdf")
+plot(UKfacultys,
+  vertex.size = node_desp$degree / 5,
+  vertex.label = as.vector(V(UKfacultys)),
+  edge.arrow.size = 0.25, layout = layout.fruchterman.reingold,
+  main = "Degree", margin = -.08
+)
+dev.off()
+pdf('figures/UKfacaulty_betweeness_net.pdf')
+plot(UKfacultys,
+  vertex.size = node_desp$between / 50,
+  vertex.label = as.vector(V(UKfacultys)),
+  edge.arrow.size = 0.25, layout = layout.fruchterman.reingold,
+  main = "Betweenness", margin = -.08
+)
+dev.off()
+pdf("figures/UKfacaulty_hub_net.pdf")
+plot(UKfacultys,
+  vertex.size = node_desp$hub.vector*10,
+  vertex.label = as.vector(V(UKfacultys)),
+  edge.arrow.size = 0.25, layout = layout.fruchterman.reingold,
+  main = "Betweenness", margin = -.08
+)
+dev.off()
+```
+Node # 29 has the highest degree, hub and authority score; Consider also the betweenness, the node #37 has the highest betweenness and second highese degree, hub and authority score. I'd rather say that #37 is more central but actually I didn't read what the data means in real world.
+
+## Excercise Part 2
+### data overview
+```{r}
+Copysb_net <- readRDS(file = "data/exercises_part2_network.RDS")
+# vertices names
+names(vertex_attr(graph = Copysb_net))
+# edges
+names(edge_attr(Copysb_net))
+# attributes
+print(Copysb_net)
+# edge list
+Copysb_net_edges <- as_edgelist(graph = Copysb_net, names = F)
+# adjcency matrix
+Copysb_net_adj_mat <- as_adjacency_matrix(graph = Copysb_net)
+# vertices and edges description
+V(Copysb_net)
+E(Copysb_net)
+```
+a undirectional network
+### Detecting communities. 
+Simplify the graph by removing multiple edges and loops. 
+```{r}
+Copysb_nets <- igraph::simplify(Copysb_net,
+  remove.multiple = TRUE,
+  remove.loops = TRUE,
+  edge.attr.comb = list(
+    weight = "sum",
+    type = "ignore"
+  )
+)
+```
+Then, try to identify potential communities within the network by applying at least three different types of community detection algorithms, 
+1. Walktrap
+```{r}
+walktrap_steps <- function(step){
+  Copysb_comm_wt <- cluster_walktrap(
+    graph = Copysb_nets, steps = step,
+    membership = T
+  )
+  c(mod = modularity(Copysb_comm_wt), mem = membership(Copysb_comm_wt))
+}
+steps <- c(15, 30, 50, 100)
+mod_mem_list <- sapply(steps, walktrap_steps)
+## highest modurity is when step ==30
+# table(mems_wt_4step, mems_wt_3step)
+pdf("figures/copysb_Walktrap_step30.pdf")
+layout <- layout.fruchterman.reingold(Copysb_nets)
+
+plot(Copysb_nets,
+  layout = layout, # note the use of layout
+  vertex.color = unlist(mod_mem_list[, 3]), edge.color = "light gray",
+  vertex.size = 5, main = "Walktrap: 30 Steps",
+  vertex.label = NA
+)
+dev.off()
+## not ideal
+```
+2. Edge Betweenness
+```{r}
+Copysb_comm_eb <- cluster_edge_betweenness(graph = Copysb_nets)
+pdf('figures/Copysb_betweeness_dendrogram.pdf')
+plot(as.dendrogram(Copysb_comm_eb))
+dev.off()
+extract_modularity_data <- function(communities, graph) {
+  # Arguments:
+  # communities: igraph communities object
+  # graph: igraph object
+
+  mems_list <- list() # list where membership information will be saved
+  num_communities <- NA # vector where number of communities will be saved
+  modularities <- NA # avector to store modularity scores
+
+  # Extracting levels of aggregation, or steps,
+  # in the hierarchical merge data.
+  num_merges <- 0:nrow(communities$merges)
+
+  # Note that we start from 0 as the first level
+  # corresponds to all nodes in their own community,
+  # and that does not have a row in the  merge data frame.
+
+  # Looping through each level of aggregation
+  for (x in 1:length(num_merges)) {
+    # We first extract the membership
+    # information at the given merge level using a
+    # cut_at function. The inputs are the community
+    # object and the merge step of interest.
+
+    mems_list[[x]] <- cut_at(communities, steps = num_merges[x])
+
+    # Now we calculate the number of communities associated
+    # with the given clustering solution:
+    num_communities[x] <- length(unique(mems_list[[x]]))
+
+    # Let's also calculate the modularity score, just to make sure
+    # we get the right value for that set of community memberships:
+    modularities[x] <- modularity(graph, mems_list[[x]])
+  }
+
+  # We will now put together our extracted
+  # information in a data frame.
+
+  plot_data <- data.frame(
+    modularity = modularities,
+    num_communities = num_communities
+  )
+
+  # Let's reorder to go from low number of communities to high:
+  mems_list <- mems_list[order(plot_data$num_communities)]
+  plot_data <- plot_data[order(plot_data$num_communities), ]
+  rownames(plot_data) <- 1:nrow(plot_data)
+
+  # outputting results in a list:
+  return(list(
+    summary_data = plot_data,
+    membership_list = mems_list
+  ))
+}
+modularity_data <- extract_modularity_data(
+  communities = Copysb_comm_eb,
+  graph = Copysb_nets
+)
+summary_data <- modularity_data[[1]]
+ggplot(summary_data, aes(num_communities, modularity)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  geom_line(color = "black", linetype = "solid") +
+  geom_point(shape = 19, size = 1, color = "black") +
+  labs(
+    title = "Modularity by Number of Communities",
+    x = "Number of Communities", y = "Modularity"
+  )
+ggsave('figures/copysb_betweenness_commu.pdf')
+## where the highest score\
+mems_list <- modularity_data[[2]]
+mems_ids <- which(summary_data$num_communities == summary_data[which.max(summary_data$modularity), "num_communities"])
+mems_eb23 <- mems_list[[mems_ids]]
+
+pdf("figures/copysb_betweeness_23cluster.pdf")
+layout <- layout.fruchterman.reingold(Copysb_nets)
+
+plot(Copysb_nets,
+  layout = layout, # note the use of layout
+  vertex.color = unlist(mems_eb23), edge.color = "light gray",
+  vertex.size = 5, main = "Walktrap: 30 Steps",
+  vertex.label = NA
+)
+dev.off()
+```
+3. Multi-level Clustering
+```{r}
+set.seed(404)
+Copysb_comm_multi <- cluster_louvain(
+  graph = Copysb_nets,
+  resolution = 1
+)
+Copysb_comm_multi$modularity
+## highest modularity at level 4
+
+pdf("figures/copysb_level4.pdf")
+layout <- layout.fruchterman.reingold(Copysb_nets)
+
+plot(Copysb_nets,
+  layout = layout, # note the use of layout
+  vertex.color = unlist(Copysb_comm_multi$memberships[4, ]), edge.color = "light gray",
+  vertex.size = 5, main = "Louvain cluster Level: 4",
+  vertex.label = NA
+)
+dev.off()
+## not ideal
+```
+### Graph models. 
+Generate and plot three undirected graphs according to the Watts-Strogatz (small world) model. Each graph should have 50 nodes, dimension 1, and a rewiring probability of 0.1. Use a different value for the neighborhood parameter (“nei”) in each case. 
+```{r}
+generate_wsnet <- function(nei){
+  sample_smallworld(dim=1, size=50, nei, p=0.1, loops = FALSE, multiple = FALSE)
+}
+neis <- c(10, 20, 30)
+sw_nets <- sapply(neis, generate_wsnet)
+```
+Describe briefly what happens to the network edge density.
+```{r}
+sapply(sw_nets, edge_density)
+```
+density increses
